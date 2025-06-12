@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mapbox Globe</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    mapboxgl.accessToken = 'pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/satellite-v9',
+      projection: 'globe', // enables 3D globe mode!
+      zoom: 2,
+      center: [106.9, 47.9] // Mongolia as default
+    });
+
+    map.on('style.load', () => {
+      map.setFog({}); // default atmosphere
+    });
+  </script>
+</body>
+</html>
