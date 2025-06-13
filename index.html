@@ -34,91 +34,34 @@
     });
     map.on('style.load', () => { map.setFog({}); });
 
-    let geojsonLayers = []; // To remove layers later
-
-    // Remove previous KML overlays
-    function clearKmlLayers() {
-      geojsonLayers.forEach(id => {
-        try { map.removeLayer(id); } catch {}
-      });
+    // --- Add/Update GeoJSON Layer ---
+    function addGeoJsonToMap(geojson) {
+      debug('addGeoJsonToMap() called');
       if (map.getSource('kml-data')) {
-        try { map.removeSource('kml-data'); } catch {}
-      }
-      geojsonLayers = [];
-    }
-
-    // Add all KML overlays as a single FeatureCollection
-    function addAllKmls(kmlArray) {
-      debug('addAllKmls() called');
-      clearKmlLayers();
-      let allFeatures = [];
-      kmlArray.forEach((file, idx) => {
-        const parser = new DOMParser();
-        const kmlDoc = parser.parseFromString(file.raw, "text/xml");
-        const geojson = toGeoJSON.kml(kmlDoc);
-        if (geojson && geojson.features) {
-          allFeatures.push(...geojson.features);
-        }
-      });
-      if (!allFeatures.length) {
-        debug('No features found.');
-        return;
-      }
-      const featureCollection = { type: "FeatureCollection", features: allFeatures };
-      map.addSource('kml-data', { type: 'geojson', data: featureCollection });
-
-      map.addLayer({
-        id: 'kml-polygon',
-        type: 'fill',
-        source: 'kml-data',
-        paint: { 'fill-color': '#00FF80', 'fill-opacity': 0.4 },
-        filter: ['==', '$type', 'Polygon']
-      });
-      geojsonLayers.push('kml-polygon');
-
-      map.addLayer({
-        id: 'kml-outline',
-        type: 'line',
-        source: 'kml-data',
-        paint: { 'line-color': '#fff', 'line-width': 2 },
-        filter: ['==', '$type', 'Polygon']
-      });
-      geojsonLayers.push('kml-outline');
-
-      map.addLayer({
-        id: 'kml-point',
-        type: 'circle',
-        source: 'kml-data',
-        paint: { 'circle-radius': 6, 'circle-color': '#ff0' },
-        filter: ['==', '$type', 'Point']
-      });
-      geojsonLayers.push('kml-point');
-    }
-
-    // "Fly to" a selected KML's first feature
-    function flyToFirstFeature(kmlRaw) {
-      debug('flyToFirstFeature() called');
-      const parser = new DOMParser();
-      const kmlDoc = parser.parseFromString(kmlRaw, "text/xml");
-      const geojson = toGeoJSON.kml(kmlDoc);
-      if (geojson && geojson.features && geojson.features.length) {
-        const feature = geojson.features[0];
-        let center;
-        if (feature.geometry.type === 'Polygon') {
-          // Get average of polygon points
-          let coords = feature.geometry.coordinates[0];
-          let lats = coords.map(c => c[1]);
-          let lngs = coords.map(c => c[0]);
-          center = [
-            lngs.reduce((a, b) => a + b, 0) / lngs.length,
-            lats.reduce((a, b) => a + b, 0) / lats.length
-          ];
-        } else if (feature.geometry.type === 'Point') {
-          center = feature.geometry.coordinates;
-        }
-        if (center) {
-          map.flyTo({ center: center, zoom: 10 });
-        }
+        map.getSource('kml-data').setData(geojson);
+      } else {
+        map.addSource('kml-data', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'kml-polygon',
+          type: 'fill',
+          source: 'kml-data',
+          paint: { 'fill-color': '#00FF80', 'fill-opacity': 0.4 },
+          filter: ['==', '$type', 'Polygon']
+        });
+        map.addLayer({
+          id: 'kml-outline',
+          type: 'line',
+          source: 'kml-data',
+          paint: { 'line-color': '#fff', 'line-width': 2 },
+          filter: ['==', '$type', 'Polygon']
+        });
+        map.addLayer({
+          id: 'kml-point',
+          type: 'circle',
+          source: 'kml-data',
+          paint: { 'circle-radius': 6, 'circle-color': '#ff0' },
+          filter: ['==', '$type', 'Point']
+        });
       }
     }
 
@@ -128,13 +71,13 @@
       debug(event.data);
       try {
         let msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (msg.type === 'KML_LIST') {
-          debug('KML_LIST received');
-          addAllKmls(msg.payload);
-        }
-        if (msg.type === 'KML_FLYTO') {
-          debug('KML_FLYTO received');
-          flyToFirstFeature(msg.payload);
+        if (msg.type === 'KML_RAW') {
+          debug('KML_RAW received, parsing...');
+          const parser = new DOMParser();
+          const kmlDoc = parser.parseFromString(msg.payload, "text/xml");
+          const geojson = toGeoJSON.kml(kmlDoc);
+          debug(geojson);
+          addGeoJsonToMap(geojson);
         }
       } catch (e) {
         debug('Error handling postMessage: ' + e);
