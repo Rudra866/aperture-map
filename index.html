@@ -6,85 +6,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-  <script src="https://unpkg.com/togeojson"></script>
+  <!-- UMD togeojson -->
+  <script src="https://unpkg.com/togeojson@2.4.0/dist/togeojson.js"></script>
   <style>
     html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
-    #debugLog { position:absolute;top:0;left:0;z-index:9999;color:#fff;background:rgba(0,0,0,0.8);max-width:100vw;max-height:200px;overflow:auto;font-size:12px;padding:5px;}
+    #debugLog {
+      position:absolute; top:0; left:0; z-index:9999;
+      color:#fff; background:rgba(0,0,0,0.6);
+      max-width:100vw; max-height:200px; overflow:auto;
+      font-size:12px; padding:5px;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <pre id="debugLog"></pre>
   <script>
-    // --- Debug utility ---
-    function debug(msg) {
-      const el = document.getElementById('debugLog');
-      el.textContent += (typeof msg === 'object' ? JSON.stringify(msg) : msg) + '\n';
-    }
-    console.log = debug; console.error = debug;
+    function debug(m){document.getElementById('debugLog').textContent+=typeof m==='object'?JSON.stringify(m):m+'\n';}
+    console.log=debug; console.error=debug;
 
-    // --- Mapbox setup ---
-    mapboxgl.accessToken = 'pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
-    const map = new mapboxgl.Map({
-      container: 'map',
-      style: 'mapbox://styles/mapbox/satellite-v9',
-      projection: 'globe',
-      zoom: 2,
-      center: [106.9, 47.9]
+    mapboxgl.accessToken='pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
+    const map=new mapboxgl.Map({
+      container:'map',
+      style:'mapbox://styles/mapbox/satellite-v9',
+      projection:'globe',
+      center:[106.9,47.9],zoom:2
     });
-    map.on('style.load', () => { map.setFog({}); });
+    map.on('style.load',()=>map.setFog({}));
 
-    // --- Add/Update GeoJSON Layer ---
-    function addGeoJsonToMap(geojson) {
-      debug('addGeoJsonToMap() called');
-      if (map.getSource('kml-data')) {
-        map.getSource('kml-data').setData(geojson);
-      } else {
-        map.addSource('kml-data', { type: 'geojson', data: geojson });
-        map.addLayer({
-          id: 'kml-polygon',
-          type: 'fill',
-          source: 'kml-data',
-          paint: { 'fill-color': '#00FF80', 'fill-opacity': 0.4 },
-          filter: ['==', '$type', 'Polygon']
-        });
-        map.addLayer({
-          id: 'kml-outline',
-          type: 'line',
-          source: 'kml-data',
-          paint: { 'line-color': '#fff', 'line-width': 2 },
-          filter: ['==', '$type', 'Polygon']
-        });
-        map.addLayer({
-          id: 'kml-point',
-          type: 'circle',
-          source: 'kml-data',
-          paint: { 'circle-radius': 6, 'circle-color': '#ff0' },
-          filter: ['==', '$type', 'Point']
-        });
-      }
+    function clearKml(){
+      ['kml-polygon','kml-outline','kml-point'].forEach(id=>{try{map.removeLayer(id)}catch{}});
+      try{map.removeSource('kml-data')}catch{};
     }
 
-    // --- Listen for messages from WebView (both window & document) ---
-    function handleMessageEvent(event) {
-      debug('Message event triggered');
-      debug(event.data);
-      try {
-        let msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (msg.type === 'KML_RAW') {
-          debug('KML_RAW received, parsing...');
-          const parser = new DOMParser();
-          const kmlDoc = parser.parseFromString(msg.payload, "text/xml");
-          const geojson = toGeoJSON.kml(kmlDoc);
-          debug(geojson);
-          addGeoJsonToMap(geojson);
-        }
-      } catch (e) {
-        debug('Error handling postMessage: ' + e);
-      }
+    function renderAll(list){
+      debug('renderAll'); clearKml();
+      let feats=[];
+      list.forEach(f=>{
+        const doc=new DOMParser().parseFromString(f.raw,'text/xml');
+        const gj=toGeoJSON.kml(doc);
+        if(gj.features) feats.push(...gj.features);
+      });
+      if(!feats.length) return debug('no features');
+      const fc={type:'FeatureCollection',features:feats};
+      map.addSource('kml-data',{type:'geojson',data:fc});
+      map.addLayer({id:'kml-polygon',type:'fill',source:'kml-data',
+        paint:{'fill-color':'#00FF80','fill-opacity':0.4},filter:['==','$type','Polygon']});
+      map.addLayer({id:'kml-outline',type:'line',source:'kml-data',
+        paint:{'line-color':'#fff','line-width':2},filter:['==','$type','Polygon']});
+      map.addLayer({id:'kml-point',type:'circle',source:'kml-data',
+        paint:{'circle-radius':6,'circle-color':'#ff0'},filter:['==','$type','Point']});
     }
-    window.addEventListener('message', handleMessageEvent);
-    document.addEventListener('message', handleMessageEvent); // For some RN WebView implementations
+
+    function flyTo(raw){
+      debug('flyTo'); const gj=toGeoJSON.kml(new DOMParser().parseFromString(raw,'text/xml'));
+      if(!gj.features?.length) return;
+      const f=gj.features[0],t=f.geometry.type;
+      let c;
+      if(t==='Point') c=f.geometry.coordinates;
+      else if(t==='Polygon'){
+        const pts=f.geometry.coordinates[0];
+        const lats=pts.map(p=>p[1]),lngs=pts.map(p=>p[0]);
+        c=[lngs.reduce((a,b)=>a+b)/lngs.length,lats.reduce((a,b)=>a+b)/lats.length];
+      }
+      c&&map.flyTo({center:c,zoom:10});
+    }
+
+    function onMsg(e){
+      let m=typeof e.data==='string'?JSON.parse(e.data):e.data;
+      if(m.type==='KML_LIST') renderAll(m.payload);
+      if(m.type==='KML_FLYTO') flyTo(m.payload);
+    }
+    window.addEventListener('message',onMsg);
+    document.addEventListener('message',onMsg);
   </script>
 </body>
 </html>
