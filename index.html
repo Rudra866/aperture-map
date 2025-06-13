@@ -6,16 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-  <!-- UMD togeojson -->
-  <script src="https://unpkg.com/togeojson@2.4.0/dist/togeojson.js"></script>
+  <script src="https://unpkg.com/togeojson@0.16.0/dist/togeojson.umd.js"></script>
   <style>
     html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
-    #debugLog {
-      position:absolute; top:0; left:0; z-index:9999;
-      color:#fff; background:rgba(0,0,0,0.6);
-      max-width:100vw; max-height:200px; overflow:auto;
-      font-size:12px; padding:5px;
-    }
+    #debugLog { position:absolute;top:0;left:0;z-index:9999;color:#fff;background:rgba(0,0,0,0.8);max-width:100vw;max-height:200px;overflow:auto;font-size:12px;padding:5px;}
   </style>
 </head>
 <body>
@@ -34,9 +28,11 @@
     });
     map.on('style.load',()=>map.setFog({}));
 
+    let drawn = false;
     function clearKml(){
       ['kml-polygon','kml-outline','kml-point'].forEach(id=>{try{map.removeLayer(id)}catch{}});
       try{map.removeSource('kml-data')}catch{};
+      drawn = false;
     }
 
     function renderAll(list){
@@ -56,11 +52,13 @@
         paint:{'line-color':'#fff','line-width':2},filter:['==','$type','Polygon']});
       map.addLayer({id:'kml-point',type:'circle',source:'kml-data',
         paint:{'circle-radius':6,'circle-color':'#ff0'},filter:['==','$type','Point']});
+      drawn = true;
     }
 
     function flyTo(raw){
-      debug('flyTo'); const gj=toGeoJSON.kml(new DOMParser().parseFromString(raw,'text/xml'));
-      if(!gj.features?.length) return;
+      debug('flyTo');
+      const gj=toGeoJSON.kml(new DOMParser().parseFromString(raw,'text/xml'));
+      if(!gj.features?.length) return debug('no features to fly');
       const f=gj.features[0],t=f.geometry.type;
       let c;
       if(t==='Point') c=f.geometry.coordinates;
@@ -69,11 +67,15 @@
         const lats=pts.map(p=>p[1]),lngs=pts.map(p=>p[0]);
         c=[lngs.reduce((a,b)=>a+b)/lngs.length,lats.reduce((a,b)=>a+b)/lats.length];
       }
-      c&&map.flyTo({center:c,zoom:10});
+      if(c) map.flyTo({center:c,zoom:10});
     }
 
     function onMsg(e){
-      let m=typeof e.data==='string'?JSON.parse(e.data):e.data;
+      debug('msg');
+      let m;
+      try {
+        m=typeof e.data==='string'?JSON.parse(e.data):e.data;
+      } catch(err) { debug('parsefail'); return; }
       if(m.type==='KML_LIST') renderAll(m.payload);
       if(m.type==='KML_FLYTO') flyTo(m.payload);
     }
