@@ -28,3 +28,68 @@
   </script>
 </body>
 </html>
+<script src="https://unpkg.com/togeojson"></script>
+<script>
+  function addGeoJsonToMap(geojson) {
+    if (map.getSource('kml-data')) {
+      map.getSource('kml-data').setData(geojson);
+    } else {
+      map.addSource('kml-data', {
+        type: 'geojson',
+        data: geojson,
+      });
+      map.addLayer({
+        id: 'kml-polygon',
+        type: 'fill',
+        source: 'kml-data',
+        paint: {
+          'fill-color': '#00FF80',
+          'fill-opacity': 0.4,
+        },
+        filter: ['==', '$type', 'Polygon']
+      });
+      map.addLayer({
+        id: 'kml-outline',
+        type: 'line',
+        source: 'kml-data',
+        paint: {
+          'line-color': '#fff',
+          'line-width': 2,
+        },
+        filter: ['==', '$type', 'Polygon']
+      });
+      map.addLayer({
+        id: 'kml-point',
+        type: 'circle',
+        source: 'kml-data',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#ff0'
+        },
+        filter: ['==', '$type', 'Point']
+      });
+    }
+  }
+
+  window.addEventListener('message', function (event) {
+    try {
+      let msg;
+      if (typeof event.data === 'string') {
+        msg = JSON.parse(event.data);
+      } else {
+        msg = event.data;
+      }
+      if (msg.type === 'KML_RAW') {
+        // Parse KML to GeoJSON using togeojson
+        const parser = new DOMParser();
+        const kmlDoc = parser.parseFromString(msg.payload, "text/xml");
+        const geojson = toGeoJSON.kml(kmlDoc);
+        addGeoJsonToMap(geojson);
+        console.log("Loaded new KML data on globe", geojson);
+      }
+    } catch (e) {
+      console.error("Error handling postMessage:", e);
+    }
+  });
+</script>
+
