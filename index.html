@@ -6,81 +6,186 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-  <script src="https://unpkg.com/togeojson@0.16.0/dist/togeojson.umd.js"></script>
   <style>
     html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
-    #debugLog { position:absolute;top:0;left:0;z-index:9999;color:#fff;background:rgba(0,0,0,0.8);max-width:100vw;max-height:200px;overflow:auto;font-size:12px;padding:5px;}
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <pre id="debugLog"></pre>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/togeojson"></script>
   <script>
-    function debug(m){document.getElementById('debugLog').textContent+=typeof m==='object'?JSON.stringify(m):m+'\n';}
-    console.log=debug; console.error=debug;
-
-    mapboxgl.accessToken='pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
-    const map=new mapboxgl.Map({
-      container:'map',
-      style:'mapbox://styles/mapbox/satellite-v9',
-      projection:'globe',
-      center:[106.9,47.9],zoom:2
+    mapboxgl.accessToken = 'pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/satellite-v9',
+      projection: 'globe',
+      zoom: 2,
+      center: [106.9, 47.9]
     });
-    map.on('style.load',()=>map.setFog({}));
-
-    let drawn = false;
-    function clearKml(){
-      ['kml-polygon','kml-outline','kml-point'].forEach(id=>{try{map.removeLayer(id)}catch{}});
-      try{map.removeSource('kml-data')}catch{};
-      drawn = false;
-    }
-
-    function renderAll(list){
-      debug('renderAll'); clearKml();
-      let feats=[];
-      list.forEach(f=>{
-        const doc=new DOMParser().parseFromString(f.raw,'text/xml');
-        const gj=toGeoJSON.kml(doc);
-        if(gj.features) feats.push(...gj.features);
+    
+    map.on('style.load', () => {
+      map.setFog({});
+    });
+    
+    // Store all features for fly-to by id
+    let kmlFeatures = [];  // [{id, geojson, bbox, type, name}]
+    
+    // Helper: parse KML to GeoJSON and add id/name
+    function parseKmlWithId(raw, id, name) {
+      const parser = new DOMParser();
+      const kmlDoc = parser.parseFromString(raw, "text/xml");
+      const geojson = toGeoJSON.kml(kmlDoc);
+      // Assign id to all features for easy lookup
+      geojson.features.forEach(f => {
+        f.properties = f.properties || {};
+        f.properties.kmlId = id;
+        f.properties.kmlName = name || id;
       });
-      if(!feats.length) return debug('no features');
-      const fc={type:'FeatureCollection',features:feats};
-      map.addSource('kml-data',{type:'geojson',data:fc});
-      map.addLayer({id:'kml-polygon',type:'fill',source:'kml-data',
-        paint:{'fill-color':'#00FF80','fill-opacity':0.4},filter:['==','$type','Polygon']});
-      map.addLayer({id:'kml-outline',type:'line',source:'kml-data',
-        paint:{'line-color':'#fff','line-width':2},filter:['==','$type','Polygon']});
-      map.addLayer({id:'kml-point',type:'circle',source:'kml-data',
-        paint:{'circle-radius':6,'circle-color':'#ff0'},filter:['==','$type','Point']});
-      drawn = true;
+      return geojson;
     }
-
-    function flyTo(raw){
-      debug('flyTo');
-      const gj=toGeoJSON.kml(new DOMParser().parseFromString(raw,'text/xml'));
-      if(!gj.features?.length) return debug('no features to fly');
-      const f=gj.features[0],t=f.geometry.type;
-      let c;
-      if(t==='Point') c=f.geometry.coordinates;
-      else if(t==='Polygon'){
-        const pts=f.geometry.coordinates[0];
-        const lats=pts.map(p=>p[1]),lngs=pts.map(p=>p[0]);
-        c=[lngs.reduce((a,b)=>a+b)/lngs.length,lats.reduce((a,b)=>a+b)/lats.length];
+    
+    // Helper: compute bounds for a GeoJSON feature
+    function featureBounds(feature) {
+      if (!feature) return null;
+      let coords = [];
+      if (feature.geometry.type === 'Polygon') {
+        coords = feature.geometry.coordinates.flat();
+      } else if (feature.geometry.type === 'Point') {
+        coords = [feature.geometry.coordinates];
+      } else if (feature.geometry.type === 'MultiPolygon') {
+        coords = feature.geometry.coordinates.flat(2);
       }
-      if(c) map.flyTo({center:c,zoom:10});
+      if (!coords.length) return null;
+      let minLng = coords[0][0], minLat = coords[0][1], maxLng = coords[0][0], maxLat = coords[0][1];
+      coords.forEach(([lng, lat]) => {
+        minLng = Math.min(minLng, lng);
+        minLat = Math.min(minLat, lat);
+        maxLng = Math.max(maxLng, lng);
+        maxLat = Math.max(maxLat, lat);
+      });
+      return [[minLng, minLat], [maxLng, maxLat]];
     }
-
-    function onMsg(e){
-      debug('msg');
-      let m;
+    
+    // Add all KMLs as a single source/layer
+    function showKmlList(kmlList) {
+      // Build one geojson with all features, tracking id/name
+      kmlFeatures = [];
+      let allFeatures = [];
+      for (const {id, raw, name} of kmlList) {
+        const geojson = parseKmlWithId(raw, id, name);
+        geojson.features.forEach(f => {
+          kmlFeatures.push({id, geojson: f, name, bbox: featureBounds(f), type: f.geometry.type});
+          allFeatures.push(f);
+        });
+      }
+      const allGeojson = { type: 'FeatureCollection', features: allFeatures };
+      addGeoJsonToMap(allGeojson);
+    }
+    
+    // Add or update layers
+    function addGeoJsonToMap(geojson) {
+      if (map.getSource('kml-data')) {
+        map.getSource('kml-data').setData(geojson);
+      } else {
+        map.addSource('kml-data', {
+          type: 'geojson',
+          data: geojson,
+        });
+        map.addLayer({
+          id: 'kml-polygon',
+          type: 'fill',
+          source: 'kml-data',
+          paint: {
+            'fill-color': '#00FF80',
+            'fill-opacity': 0.4,
+          },
+          filter: ['==', '$type', 'Polygon']
+        });
+        map.addLayer({
+          id: 'kml-outline',
+          type: 'line',
+          source: 'kml-data',
+          paint: {
+            'line-color': '#fff',
+            'line-width': 2,
+          },
+          filter: ['==', '$type', 'Polygon']
+        });
+        map.addLayer({
+          id: 'kml-point',
+          type: 'circle',
+          source: 'kml-data',
+          paint: {
+            'circle-radius': 6,
+            'circle-color': '#ff0'
+          },
+          filter: ['==', '$type', 'Point']
+        });
+      }
+    }
+    
+    // Fly to a KML by raw KML
+    function flyToKml(raw) {
+      const parser = new DOMParser();
+      const kmlDoc = parser.parseFromString(raw, "text/xml");
+      const geojson = toGeoJSON.kml(kmlDoc);
+      // Take the first feature, center on it
+      if (geojson.features && geojson.features.length) {
+        const f = geojson.features[0];
+        let center;
+        if (f.geometry.type === 'Point') {
+          center = f.geometry.coordinates;
+          map.flyTo({center, zoom: 13, essential: true});
+        } else {
+          // Polygon: fit to bounds
+          const bbox = featureBounds(f);
+          if (bbox) {
+            map.fitBounds(bbox, {padding: 60, duration: 1200});
+          }
+        }
+      }
+    }
+    
+    // Globe: click-to-fly
+    map.on('click', 'kml-point', function(e) {
+      if (e.features.length) {
+        const coords = e.features[0].geometry.coordinates;
+        map.flyTo({center: coords, zoom: 13, essential: true});
+        // Optionally send to React Native using postMessage
+        // window.ReactNativeWebView?.postMessage(JSON.stringify({type:'GLOBE_FLYTO', id: e.features[0].properties.kmlId}));
+      }
+    });
+    map.on('click', 'kml-polygon', function(e) {
+      if (e.features.length) {
+        const bbox = featureBounds(e.features[0]);
+        if (bbox) map.fitBounds(bbox, {padding: 60, duration: 1200});
+        // Optionally send to React Native using postMessage
+        // window.ReactNativeWebView?.postMessage(JSON.stringify({type:'GLOBE_FLYTO', id: e.features[0].properties.kmlId}));
+      }
+    });
+    
+    // Receive messages from React Native app
+    window.addEventListener('message', function (event) {
       try {
-        m=typeof e.data==='string'?JSON.parse(e.data):e.data;
-      } catch(err) { debug('parsefail'); return; }
-      if(m.type==='KML_LIST') renderAll(m.payload);
-      if(m.type==='KML_FLYTO') flyTo(m.payload);
-    }
-    window.addEventListener('message',onMsg);
-    document.addEventListener('message',onMsg);
-  </script>
+        let msg;
+        if (typeof event.data === 'string') {
+          msg = JSON.parse(event.data);
+        } else {
+          msg = event.data;
+        }
+        if (msg.type === 'KML_LIST') {
+          showKmlList(msg.payload);
+        }
+        if (msg.type === 'KML_FLYTO') {
+          flyToKml(msg.payload);
+        }
+      } catch (e) {
+        console.error("Error handling postMessage:", e);
+      }
+    });
+    </script>
+  
 </body>
+
 </html>
