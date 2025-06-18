@@ -16,6 +16,46 @@
   <div id="map"></div>
   <pre id="debugLog"></pre>
   <script>
+    function renderStations(stationList){
+      const geojson = {
+        type : 'FeatureCollection',
+        features: stationList.map(station => ({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [station.longitude, station.latitude]
+          },
+          properties: {
+            name: station.stationName
+          }
+        }))
+      };
+      if (map.getSource('stations')){
+        map.getSource('stations').setData(geojson);
+      } else {
+        map.addSource('stations', {
+          type:"geojson",
+          data: geojson
+        });
+        map.addLayer({
+          id:'station-points',
+          type:'circle',
+          source:'stations',
+          paint:{
+            'circle-radius': 3,
+            'circle-color': '#ff5500'
+          }
+        });
+        map.on('click', 'station-points',(e) => {
+          const coords = e.features[0].geometry.coordinates;
+          const name = e.features[0].properties.name;
+          new mapboxgl.Popup()
+          .setLngLat(coords)
+          .setHTML(`<b>${name}</b>`)
+          .addTo(map);
+        });
+      }
+    }
     function debug(msg) {
       const el = document.getElementById('debugLog');
       if (!el) return;
@@ -194,19 +234,19 @@
     window.addEventListener('message', function (event) {
       try {
         debug(`[postMessage] event received: type=${typeof event.data}`);
-        let msg;
-        if (typeof event.data === 'string') {
-          msg = JSON.parse(event.data);
-        } else {
-          msg = event.data;
-        }
+        let msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         debug(`[postMessage] Parsed message type=${msg.type}`);
         if (msg.type === 'KML_LIST') showKmlList(msg.payload);
         if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
-      } catch (e) {
-        debug("[postMessage] Error: " + e);
+        if (msg.type === 'STATIONS') {
+          console.log('[WebView] Rendering STATIONS:', msg.payload.length);
+          renderStations(msg.payload);
+          }
+        } catch (e) {
+          debug("[postMessage] Error: " + e);
       }
     });
+
 
     // Debug: Show a marker if nothing loads in first 2s
     setTimeout(() => {
@@ -224,6 +264,7 @@
         });
       }
     }, 2000);
+
   </script>
 </body>
 </html>
