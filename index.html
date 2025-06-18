@@ -232,20 +232,27 @@
 
     // Receive messages from React Native app
     window.addEventListener('message', function (event) {
-      try {
-        debug(`[postMessage] event received: type=${typeof event.data}`);
-        let msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        debug(`[postMessage] Parsed message type=${msg.type}`);
-        if (msg.type === 'KML_LIST') showKmlList(msg.payload);
-        if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
-        if (msg.type === 'STATIONS') {
-          console.log('[WebView] Rendering STATIONS:', msg.payload.length);
-          renderStations(msg.payload);
-          }
-        } catch (e) {
-          debug("[postMessage] Error: " + e);
-      }
-    });
+  try {
+    debug(`[postMessage] event received: type=${typeof event.data}`);
+    
+    if (!event.data || typeof event.data !== 'string' || event.data.trim().length === 0) {
+      debug("[postMessage] Skipping empty or invalid message.");
+      return;
+    }
+
+    let msg = JSON.parse(event.data);
+    debug(`[postMessage] Parsed message type=${msg.type}`);
+
+    if (msg.type === 'KML_LIST') showKmlList(msg.payload);
+    else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
+    else if (msg.type === 'STATIONS') {
+      console.log('[WebView] Rendering STATIONS:', msg.payload.length);
+      renderStations(msg.payload);
+    }
+  } catch (e) {
+    debug("[postMessage] Error: " + e);
+  }
+});
 
 
     // Debug: Show a marker if nothing loads in first 2s
