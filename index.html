@@ -17,19 +17,23 @@
   <pre id="debugLog"></pre>
   <script>
     function renderStations(stationList){
+      debug('[WebView] Sample stations: ' + JSON.stringify(stationList.slice(0,3),null,2));
       const geojson = {
         type : 'FeatureCollection',
-        features: stationList.map(station => ({
-          type: 'Feature',
-          geometry: {
+        features: stationList
+          .filter(station => 
+            station.latitude != null && station.longitude != null &&
+            !isNaN(Number(station.latitude)) && !isNaN(Number(station.longitude))
+            )
+          .map(station => ({
+            type: 'Feature',
+            geometry: {
             type: 'Point',
-            coordinates: [station.longitude, station.latitude]
-          },
-          properties: {
-            name: station.stationName
-          }
+            coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
+            },
+          properties: { name: station.stationName }
         }))
-      };
+       };
       if (map.getSource('stations')){
         map.getSource('stations').setData(geojson);
       } else {
