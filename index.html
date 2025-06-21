@@ -16,7 +16,10 @@
   <div id="map"></div>
   <pre id="debugLog"></pre>
   <script>
+    window.stationsList = [];
+    window.radiusKm = 100;
     function renderStations(stationList){
+      window.stationsList = stationList;
       debug('[WebView] Sample stations: ' + JSON.stringify(stationList.slice(0,3),null,2));
       const geojson = {
         type : 'FeatureCollection',
@@ -212,6 +215,42 @@
       }
     }
 
+    function drawSelectionCircle(center, radiusKm){
+      if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
+      if (map.getSource('selection-circle')) map.removeSource('selection-circle');
+
+      const circleGeojson = createCircleGeoJSON(center, radiusKm);
+        map.addSource('selection-circle',{type: 'geojson', data: circleGeojson});
+        map.addLayer({
+          id: 'selection-circle',
+          type: 'fill',
+          source: 'selection-circle',
+          paint: {'fill-color':'#44f','fill-opacity':0.2}
+        })
+     }
+
+     function createCircleGeoJSON(center, radiusKm,points = 64){
+      const[lng, lat] = center;
+      const coords =[];
+      for (let i =0;i<=points;i++){
+        const angle = (i/ points) * 2 * Math.PI;
+        const dx = radiusKm * Math.cos(angle);
+        const dy = radiusKm * Math.sin(angle);
+        const dLng = dx / (111.32 * Math.cos(lat * Math.PI / 180));
+        const dLat = dy/ 110.574;
+        coords.push([lng + dLng, lat + dLat]);
+      }
+      return {
+        type:"FeatureCollection",
+        features:[{
+          type: "Feature",
+          geometry:{type:'Polygon', coordinates:[coords]},
+          properties:{}
+      }]
+      };
+     }
+    
+
     // Globe: click-to-fly (and popup)
     map.on('click', 'kml-point', function(e) {
       if (e.features.length) {
@@ -233,30 +272,83 @@
         if (bbox) map.fitBounds(bbox, {padding: 60, duration: 1200});
       }
     });
+    map.on('click', function(e) {
+      // Don't fire when clicking a feature; only background.
+      if (e.features && e.features.length > 0) return;
+      // Send click coordinates and the list of all stations to React Native
+      if (window.ReactNativeWebView && window.stationsList && window.stationsList.length) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'MAP_CLICK',
+          payload: {
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat,
+            allStations: window.stationsList
+          }
+        }));
+      }
+    });
 
     // Receive messages from React Native app
     window.addEventListener('message', function (event) {
-  try {
-    debug(`[postMessage] event received: type=${typeof event.data}`);
+      try {
+        debug(`[postMessage] event received: type=${typeof event.data}`);
     
-    if (!event.data || typeof event.data !== 'string' || event.data.trim().length === 0) {
-      debug("[postMessage] Skipping empty or invalid message.");
-      return;
-    }
+      if (!event.data || typeof event.data !== 'string' || event.data.trim().length === 0) {
+        debug("[postMessage] Skipping empty or invalid message.");
+        return;
+      }
 
-    let msg = JSON.parse(event.data);
-    debug(`[postMessage] Parsed message type=${msg.type}`);
+      let msg = JSON.parse(event.data);
+      debug(`[postMessage] Parsed message type=${msg.type}`);
 
-    if (msg.type === 'KML_LIST') showKmlList(msg.payload);
-    else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
-    else if (msg.type === 'STATIONS') {
-      console.log('[WebView] Rendering STATIONS:', msg.payload.length);
-      renderStations(msg.payload);
+      if (msg.type === 'KML_LIST') showKmlList(msg.payload);
+      else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
+      else if (msg.type === 'STATIONS') {
+        console.log('[WebView] Rendering STATIONS:', msg.payload.length);
+        renderStations(msg.payload);
+      }
+
+      if (msg.type === 'RADIUS_UPDATE'){
+        window.radiusKm = msg.payload.radiusKm;
+        debug(`[Radius] Set to ${window.radiusKm} km`);
+      }
+      if (msg.type === 'STATIONS_IN_RADIUS') {
+        // Clear previous selection
+        if (map.getSource('selected-stations')) {
+          map.removeLayer('selected-stations');
+          map.removeSource('selected-stations');
+        }
+        // Highlight only those in radius
+        const { stations, center, radiusKm } = msg.payload;
+        drawSelectionCircle(center, radiusKm);
+
+        const geojson = {
+          type: "FeatureCollection",
+          features: stations.map(station => ({
+            type: "Feature",
+            geometry: {
+              type: "Point",
+              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
+            },
+            properties: { name: station.stationName }
+          }))
+        };
+        map.addSource('selected-stations', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'selected-stations',
+          type: 'circle',
+          source: 'selected-stations',
+          paint: { 'circle-radius': 6, 'circle-color': '#44f' }
+        });
+        if (stations.length > 0) {
+          map.flyTo({ center: geojson.features[0].geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
+        }
+      }
+    } catch (e) {
+      debug("[postMessage] Error: " + e);
     }
-  } catch (e) {
-    debug("[postMessage] Error: " + e);
   }
-});
+);
 
 
     // Debug: Show a marker if nothing loads in first 2s
