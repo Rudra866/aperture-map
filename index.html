@@ -18,6 +18,8 @@
   <script>
     window.stationsList = [];
     window.radiusKm = 100;
+    window.stationLayerAdded = false; // <--- add this line
+  
     function renderStations(stationList){
       window.stationsList = stationList;
       debug('[WebView] Sample stations: ' + JSON.stringify(stationList.slice(0,3),null,2));
@@ -27,19 +29,19 @@
           .filter(station => 
             station.latitude != null && station.longitude != null &&
             !isNaN(Number(station.latitude)) && !isNaN(Number(station.longitude))
-            )
+          )
           .map(station => ({
             type: 'Feature',
             geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
+              type: 'Point',
+              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
             },
-          properties: { name: station.stationName }
-        }))
-       };
+            properties: { name: station.stationName }
+          }))
+      };
       if (map.getSource('stations')){
         map.getSource('stations').setData(geojson);
-      } else {
+      } else if (!window.stationLayerAdded) {
         map.addSource('stations', {
           type:"geojson",
           data: geojson
@@ -61,6 +63,7 @@
           .setHTML(`<b>${name}</b>`)
           .addTo(map);
         });
+        window.stationLayerAdded = true; // <--- flag set!
       }
     }
 
