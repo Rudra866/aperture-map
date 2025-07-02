@@ -18,9 +18,14 @@
   <script>
     window.stationsList = [];
     window.radiusKm = 100;
-    window.stationLayerAdded = false; // <--- add this line
-  
+    window.stationLayerAdded = false; // <- new
+
     function renderStations(stationList){
+      // Remove previous selection overlay and circle if present
+      if (map.getLayer('selected-stations')) map.removeLayer('selected-stations');
+      if (map.getSource('selected-stations')) map.removeSource('selected-stations');
+      if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
+      if (map.getSource('selection-circle')) map.removeSource('selection-circle');
       window.stationsList = stationList;
       debug('[WebView] Sample stations: ' + JSON.stringify(stationList.slice(0,3),null,2));
       const geojson = {
@@ -59,11 +64,11 @@
           const coords = e.features[0].geometry.coordinates;
           const name = e.features[0].properties.name;
           new mapboxgl.Popup()
-          .setLngLat(coords)
-          .setHTML(`<b>${name}</b>`)
-          .addTo(map);
+            .setLngLat(coords)
+            .setHTML(`<b>${name}</b>`)
+            .addTo(map);
         });
-        window.stationLayerAdded = true; // <--- flag set!
+        window.stationLayerAdded = true; // flag set!
       }
     }
 
@@ -80,7 +85,7 @@
     mapboxgl.accessToken = 'pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
     const map = new mapboxgl.Map({
       container: 'map',
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: 'mapbox://styles/mapbox/streets-v12',  // <-- Major cities, labels, etc.
       projection: 'globe',
       zoom: 2,
       center: [106.9, 47.9]
@@ -371,7 +376,6 @@
         });
       }
     }, 2000);
-  ger
   </script>
 </body>
 </html>
