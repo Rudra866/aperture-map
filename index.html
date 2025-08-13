@@ -27,7 +27,6 @@
       if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
       if (map.getSource('selection-circle')) map.removeSource('selection-circle');
       window.stationsList = stationList;
-      debug('[WebView] Sample stations: ' + JSON.stringify(stationList.slice(0,3),null,2));
       const geojson = {
         type : 'FeatureCollection',
         features: stationList
@@ -97,11 +96,9 @@
     // Helper: parse KML to GeoJSON and add id/name
     function parseKmlWithId(raw, id, name) {
       try {
-        debug(`[parseKmlWithId] Parsing KML for id=${id}, name=${name}`);
         const parser = new DOMParser();
         const kmlDoc = parser.parseFromString(raw, "text/xml");
         const geojson = toGeoJSON.kml(kmlDoc);
-        debug(`[parseKmlWithId] Features: ` + geojson.features.length);
         geojson.features.forEach(f => {
           f.properties = f.properties || {};
           f.properties.kmlId = id;
@@ -109,7 +106,6 @@
         });
         return geojson;
       } catch (e) {
-        debug(`[parseKmlWithId] ERROR: ${e}`);
         return { type: "FeatureCollection", features: [] };
       }
     }
@@ -138,19 +134,15 @@
 
     // Add all KMLs as a single source/layer
     function showKmlList(kmlList) {
-      debug('[showKmlList] Received KML_LIST:');
-      debug(kmlList);
       kmlFeatures = [];
       let allFeatures = [];
       for (const {id, raw, name} of kmlList) {
-        debug(`[showKmlList] Parsing raw for id=${id} name=${name} first 100 chars:\n` + (raw?.slice?.(0, 100) ?? ''));
         const geojson = parseKmlWithId(raw, id, name);
         geojson.features.forEach(f => {
           kmlFeatures.push({id, geojson: f, name, bbox: featureBounds(f), type: f.geometry.type});
           allFeatures.push(f);
         });
       }
-      debug(`[showKmlList] Total features: ${allFeatures.length}`);
       const allGeojson = { type: 'FeatureCollection', features: allFeatures };
       addGeoJsonToMap(allGeojson);
     }
@@ -158,7 +150,6 @@
     // Add or update layers
     function addGeoJsonToMap(geojson) {
       if (!geojson.features.length) {
-        debug("[addGeoJsonToMap] No features found, adding a test marker.");
         geojson.features.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [106.9, 47.9] },
@@ -167,7 +158,6 @@
       }
       if (map.getSource('kml-data')) {
         map.getSource('kml-data').setData(geojson);
-        debug("[addGeoJsonToMap] Updated source with new GeoJSON");
       } else {
         map.addSource('kml-data', { type: 'geojson', data: geojson });
         map.addLayer({
@@ -191,13 +181,11 @@
           paint: { 'circle-radius': 6, 'circle-color': '#ff0' },
           filter: ['==', '$type', 'Point']
         });
-        debug("[addGeoJsonToMap] Created layers");
       }
     }
 
     // Fly to a KML by raw KML
     function flyToKml(raw) {
-      debug("[flyToKml] Received raw string first 100 chars:\n" + (raw?.slice?.(0, 100) ?? ''));
       const parser = new DOMParser();
       const kmlDoc = parser.parseFromString(raw, "text/xml");
       const geojson = toGeoJSON.kml(kmlDoc);
@@ -206,18 +194,14 @@
         let center;
         if (f.geometry.type === 'Point') {
           center = f.geometry.coordinates;
-          debug(`[flyToKml] Flying to Point: ${center}`);
           map.flyTo({center, zoom: 13, essential: true});
         } else {
           const bbox = featureBounds(f);
           if (bbox) {
-            debug(`[flyToKml] Fitting to Polygon bounds: ${JSON.stringify(bbox)}`);
             map.fitBounds(bbox, {padding: 60, duration: 1200});
           }
         }
-      } else {
-        debug("[flyToKml] No features found in parsed GeoJSON.");
-      }
+      } 
     }
 
     function drawSelectionCircle(center, radiusKm){
@@ -261,7 +245,6 @@
       if (e.features.length) {
         const coords = e.features[0].geometry.coordinates;
         const name = e.features[0].properties.kmlName;
-        debug(`[click] Point: ${name} at ${coords}`);
         map.flyTo({center: coords, zoom: 13, essential: true});
       }
     });
@@ -269,7 +252,6 @@
       if (e.features.length) {
         const bbox = featureBounds(e.features[0]);
         const name = e.features[0].properties.kmlName;
-        debug(`[click] Polygon: ${name}, bounds: ${JSON.stringify(bbox)}`);
         if (bbox) map.fitBounds(bbox, {padding: 60, duration: 1200});
       }
     });
@@ -292,26 +274,17 @@
     // Receive messages from React Native app
     window.addEventListener('message', function (event) {
       try {
-        debug(`[postMessage] event received: type=${typeof event.data}`);
     
-      if (!event.data || typeof event.data !== 'string' || event.data.trim().length === 0) {
-        debug("[postMessage] Skipping empty or invalid message.");
-        return;
-      }
-
       let msg = JSON.parse(event.data);
-      debug(`[postMessage] Parsed message type=${msg.type}`);
 
       if (msg.type === 'KML_LIST') showKmlList(msg.payload);
       else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
       else if (msg.type === 'STATIONS') {
-        console.log('[WebView] Rendering STATIONS:', msg.payload.length);
         renderStations(msg.payload);
       }
 
       if (msg.type === 'RADIUS_UPDATE'){
         window.radiusKm = msg.payload.radiusKm;
-        debug(`[Radius] Set to ${window.radiusKm} km`);
       }
       if (msg.type === 'STATIONS_IN_RADIUS') {
         // Clear previous selection
@@ -355,7 +328,6 @@
     // Debug: Show a marker if nothing loads in first 2s
     setTimeout(() => {
       if (!map.getSource('kml-data')) {
-        debug("[Timeout] No data loaded in 2s, adding fallback marker.");
         addGeoJsonToMap({
           type: "FeatureCollection",
           features: [
