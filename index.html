@@ -63,10 +63,6 @@
         map.on('click', 'station-points',(e) => {
           const coords = e.features[0].geometry.coordinates;
           const name = e.features[0].properties.name;
-          new mapboxgl.Popup()
-            .setLngLat(coords)
-            .setHTML(`<b>${name}</b>`)
-            .addTo(map);
         });
         window.stationLayerAdded = true; // flag set!
       }
@@ -266,10 +262,6 @@
         const coords = e.features[0].geometry.coordinates;
         const name = e.features[0].properties.kmlName;
         debug(`[click] Point: ${name} at ${coords}`);
-        new mapboxgl.Popup()
-          .setLngLat(coords)
-          .setHTML(`<b>${name}</b>`)
-          .addTo(map);
         map.flyTo({center: coords, zoom: 13, essential: true});
       }
     });
