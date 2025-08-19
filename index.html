@@ -273,12 +273,46 @@
     
     // Receive messages from React Native app
     window.addEventListener('message', function (event) {
-      try {
-    
+    try {
       let msg = JSON.parse(event.data);
 
       if (msg.type === 'KML_LIST') showKmlList(msg.payload);
       else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
+      else if (msg.type === 'STATIONS') {
+        renderStations(msg.payload);
+      }
+      else if (msg.type === 'RADIUS_UPDATE') {
+        window.radiusKm = msg.payload.radiusKm;
+      }
+      else if (msg.type === 'STATIONS_IN_RADIUS') {
+        // ... your existing highlight logic ...
+        const { stations, center, radiusKm } = msg.payload;
+        drawSelectionCircle(center, radiusKm);
+        const geojson = {
+          type: "FeatureCollection",
+          features: stations.map(station => ({
+            type: "Feature",
+            geometry: {
+              type: "Point",
+              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
+            },
+            properties: { name: station.stationName }
+          }))
+        };
+        if (map.getSource('selected-stations')) {
+          map.removeLayer('selected-stations'); map.removeSource('selected-stations');
+        }
+        map.addSource('selected-stations', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'selected-stations',
+          type: 'circle',
+          source: 'selected-stations',
+          paint: { 'circle-radius': 6, 'circle-color': '#44f' }
+        });
+        if (stations.length > 0) {
+          map.flyTo({ center: geojson.features[0].geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
+        }
+      }
       else if (msg.type === 'KML_GET_CENTER') {
         const { kmlId } = msg.payload || {};
         if (!kmlId) return;
@@ -291,7 +325,10 @@
         } else {
           const bbox = featureBounds(feat.geojson);
           if (bbox) {
-            center = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
+            center = [
+              (bbox[0][0] + bbox[1][0]) / 2,
+              (bbox[0][1] + bbox[1][1]) / 2
+            ];
           }
         }
         if (center && window.ReactNativeWebView) {
@@ -301,51 +338,11 @@
           }));
         }
       }
-
-      else if (msg.type === 'STATIONS') {
-        renderStations(msg.payload);
-      }
-
-      if (msg.type === 'RADIUS_UPDATE'){
-        window.radiusKm = msg.payload.radiusKm;
-      }
-      if (msg.type === 'STATIONS_IN_RADIUS') {
-        // Clear previous selection
-        if (map.getSource('selected-stations')) {
-          map.removeLayer('selected-stations');
-          map.removeSource('selected-stations');
-        }
-        // Highlight only those in radius
-        const { stations, center, radiusKm } = msg.payload;
-        drawSelectionCircle(center, radiusKm);
-
-        const geojson = {
-          type: "FeatureCollection",
-          features: stations.map(station => ({
-            type: "Feature",
-            geometry: {
-              type: "Point",
-              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
-            },
-            properties: { name: station.stationName }
-          }))
-        };
-        map.addSource('selected-stations', { type: 'geojson', data: geojson });
-        map.addLayer({
-          id: 'selected-stations',
-          type: 'circle',
-          source: 'selected-stations',
-          paint: { 'circle-radius': 6, 'circle-color': '#44f' }
-        });
-        if (stations.length > 0) {
-          map.flyTo({ center: geojson.features[0].geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
-        }
-      }
     } catch (e) {
-      debug("[postMessage] Error: " + e);
+      console.log("[postMessage] Error: " + e);
     }
-  }
-);
+  });
+
 
 
     // Debug: Show a marker if nothing loads in first 2s
