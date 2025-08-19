@@ -16,56 +16,20 @@
   <div id="map"></div>
   <pre id="debugLog"></pre>
   <script>
+    // ---------------------------
+    // Global caches (so we can re-add after style changes)
+    // ---------------------------
     window.stationsList = [];
     window.radiusKm = 100;
-    window.stationLayerAdded = false; // <- new
 
-    function renderStations(stationList){
-      // Remove previous selection overlay and circle if present
-      if (map.getLayer('selected-stations')) map.removeLayer('selected-stations');
-      if (map.getSource('selected-stations')) map.removeSource('selected-stations');
-      if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
-      if (map.getSource('selection-circle')) map.removeSource('selection-circle');
-      window.stationsList = stationList;
-      const geojson = {
-        type : 'FeatureCollection',
-        features: stationList
-          .filter(station => 
-            station.latitude != null && station.longitude != null &&
-            !isNaN(Number(station.latitude)) && !isNaN(Number(station.longitude))
-          )
-          .map(station => ({
-            type: 'Feature',
-            geometry: {
-              type: 'Point',
-              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
-            },
-            properties: { name: station.stationName }
-          }))
-      };
-      if (map.getSource('stations')){
-        map.getSource('stations').setData(geojson);
-      } else if (!window.stationLayerAdded) {
-        map.addSource('stations', {
-          type:"geojson",
-          data: geojson
-        });
-        map.addLayer({
-          id:'station-points',
-          type:'circle',
-          source:'stations',
-          paint:{
-            'circle-radius': 3,
-            'circle-color': '#ff5500'
-          }
-        });
-        map.on('click', 'station-points',(e) => {
-          const coords = e.features[0].geometry.coordinates;
-          const name = e.features[0].properties.name;
-        });
-        window.stationLayerAdded = true; // flag set!
-      }
-    }
+    // Keep last-drawn data for re-adding
+    let lastKmlAllGeoJSON = null;       // FeatureCollection of all KML features
+    let lastSelectedGeoJSON = null;     // FeatureCollection of highlighted/selected stations
+    let lastSelectionCenter = null;     // [lng, lat]
+    let lastSelectionRadiusKm = null;
+
+    // In-memory KML features with ids for lookups
+    let kmlFeatures = [];
 
     function debug(msg) {
       const el = document.getElementById('debugLog');
@@ -73,14 +37,16 @@
       el.textContent += (typeof msg === 'object' ? JSON.stringify(msg, null, 2) : msg) + '\n';
       el.scrollTop = el.scrollHeight;
     }
-    // Route console.log/error to debug overlay
     console.log = debug;
     console.error = debug;
 
+    // ---------------------------
+    // Map init
+    // ---------------------------
     mapboxgl.accessToken = 'pk.eyJ1Ijoic2hhd25hY2ciLCJhIjoiY21idDFqb25jMHNvcDJpcHZmd28xNWUzayJ9.ruwUPA5XBDkHEoM6pr_bkw';
     const map = new mapboxgl.Map({
       container: 'map',
-      style: 'mapbox://styles/mapbox/streets-v12',  // <-- Major cities, labels, etc.
+      style: 'mapbox://styles/mapbox/streets-v12',
       projection: 'globe',
       zoom: 2,
       center: [106.9, 47.9]
@@ -88,29 +54,13 @@
 
     map.on('style.load', () => {
       map.setFog({});
+      // Re-add everything after ANY style change
+      readdAllLayers();
     });
 
-    // Store all features for fly-to by id
-    let kmlFeatures = [];
-
-    // Helper: parse KML to GeoJSON and add id/name
-    function parseKmlWithId(raw, id, name) {
-      try {
-        const parser = new DOMParser();
-        const kmlDoc = parser.parseFromString(raw, "text/xml");
-        const geojson = toGeoJSON.kml(kmlDoc);
-        geojson.features.forEach(f => {
-          f.properties = f.properties || {};
-          f.properties.kmlId = id;
-          f.properties.kmlName = name || id;
-        });
-        return geojson;
-      } catch (e) {
-        return { type: "FeatureCollection", features: [] };
-      }
-    }
-
-    // Helper: compute bounds for a GeoJSON feature
+    // ---------------------------
+    // Helpers
+    // ---------------------------
     function featureBounds(feature) {
       if (!feature) return null;
       let coords = [];
@@ -132,34 +82,35 @@
       return [[minLng, minLat], [maxLng, maxLat]];
     }
 
-    // Add all KMLs as a single source/layer
-    function showKmlList(kmlList) {
-      kmlFeatures = [];
-      let allFeatures = [];
-      for (const {id, raw, name} of kmlList) {
-        const geojson = parseKmlWithId(raw, id, name);
+    function parseKmlWithId(raw, id, name) {
+      try {
+        const parser = new DOMParser();
+        const kmlDoc = parser.parseFromString(raw, "text/xml");
+        const geojson = toGeoJSON.kml(kmlDoc);
         geojson.features.forEach(f => {
-          kmlFeatures.push({id, geojson: f, name, bbox: featureBounds(f), type: f.geometry.type});
-          allFeatures.push(f);
+          f.properties = f.properties || {};
+          f.properties.kmlId = id;
+          f.properties.kmlName = name || id;
         });
+        return geojson;
+      } catch (e) {
+        return { type: "FeatureCollection", features: [] };
       }
-      const allGeojson = { type: 'FeatureCollection', features: allFeatures };
-      addGeoJsonToMap(allGeojson);
     }
 
-    // Add or update layers
-    function addGeoJsonToMap(geojson) {
-      if (!geojson.features.length) {
-        geojson.features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [106.9, 47.9] },
-          properties: { kmlId: "test", kmlName: "Fallback Marker" }
-        });
-      }
-      if (map.getSource('kml-data')) {
-        map.getSource('kml-data').setData(geojson);
+    function addOrUpdateSource(id, data) {
+      if (map.getSource(id)) {
+        map.getSource(id).setData(data);
       } else {
-        map.addSource('kml-data', { type: 'geojson', data: geojson });
+        map.addSource(id, { type: 'geojson', data });
+      }
+    }
+
+    function addKmlLayers() {
+      if (!lastKmlAllGeoJSON) return;
+      addOrUpdateSource('kml-data', lastKmlAllGeoJSON);
+
+      if (!map.getLayer('kml-polygon')) {
         map.addLayer({
           id: 'kml-polygon',
           type: 'fill',
@@ -167,6 +118,8 @@
           paint: { 'fill-color': '#00FF80', 'fill-opacity': 0.4 },
           filter: ['==', '$type', 'Polygon']
         });
+      }
+      if (!map.getLayer('kml-outline')) {
         map.addLayer({
           id: 'kml-outline',
           type: 'line',
@@ -174,6 +127,8 @@
           paint: { 'line-color': '#fff', 'line-width': 2 },
           filter: ['==', '$type', 'Polygon']
         });
+      }
+      if (!map.getLayer('kml-point')) {
         map.addLayer({
           id: 'kml-point',
           type: 'circle',
@@ -184,74 +139,134 @@
       }
     }
 
-    // Fly to a KML by raw KML
+    function addStationsLayer() {
+      const stationFeatures = (window.stationsList || [])
+        .filter(st => st.latitude != null && st.longitude != null &&
+                      !isNaN(Number(st.latitude)) && !isNaN(Number(st.longitude)))
+        .map(st => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [parseFloat(st.longitude), parseFloat(st.latitude)] },
+          properties: { name: st.stationName }
+        }));
+      const gj = { type: 'FeatureCollection', features: stationFeatures };
+      addOrUpdateSource('stations', gj);
+      if (!map.getLayer('station-points')) {
+        map.addLayer({
+          id: 'station-points',
+          type: 'circle',
+          source: 'stations',
+          paint: { 'circle-radius': 3, 'circle-color': '#ff5500' }
+        });
+      }
+    }
+
+    function createCircleGeoJSON(center, radiusKm, points = 64) {
+      const [lng, lat] = center;
+      const coords = [];
+      for (let i = 0; i <= points; i++) {
+        const angle = (i / points) * 2 * Math.PI;
+        const dx = radiusKm * Math.cos(angle);
+        const dy = radiusKm * Math.sin(angle);
+        const dLng = dx / (111.32 * Math.cos(lat * Math.PI / 180));
+        const dLat = dy / 110.574;
+        coords.push([lng + dLng, lat + dLat]);
+      }
+      return {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: 'Polygon', coordinates: [coords] },
+          properties: {}
+        }]
+      };
+    }
+
+    function addSelectionLayers() {
+      if (!lastSelectionCenter || lastSelectionRadiusKm == null) {
+        // still remove old sources if any
+        if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
+        if (map.getSource('selection-circle')) map.removeSource('selection-circle');
+        if (map.getLayer('selected-stations')) map.removeLayer('selected-stations');
+        if (map.getSource('selected-stations')) map.removeSource('selected-stations');
+        return;
+      }
+
+      // circle
+      const circleGeojson = createCircleGeoJSON(lastSelectionCenter, lastSelectionRadiusKm);
+      addOrUpdateSource('selection-circle', circleGeojson);
+      if (!map.getLayer('selection-circle')) {
+        map.addLayer({
+          id: 'selection-circle',
+          type: 'fill',
+          source: 'selection-circle',
+          paint: { 'fill-color': '#44f', 'fill-opacity': 0.2 }
+        });
+      }
+
+      // selected stations
+      const gj = lastSelectedGeoJSON || { type: 'FeatureCollection', features: [] };
+      addOrUpdateSource('selected-stations', gj);
+      if (!map.getLayer('selected-stations')) {
+        map.addLayer({
+          id: 'selected-stations',
+          type: 'circle',
+          source: 'selected-stations',
+          paint: { 'circle-radius': 6, 'circle-color': '#44f' }
+        });
+      }
+    }
+
+    function readdAllLayers() {
+      addKmlLayers();
+      addStationsLayer();
+      addSelectionLayers();
+    }
+
+    // ---------------------------
+    // KML plumbing
+    // ---------------------------
+    function showKmlList(kmlList) {
+      kmlFeatures = [];
+      let allFeatures = [];
+      for (const {id, raw, name} of kmlList) {
+        const geojson = parseKmlWithId(raw, id, name);
+        geojson.features.forEach(f => {
+          kmlFeatures.push({id, geojson: f, name, bbox: featureBounds(f), type: f.geometry.type});
+          allFeatures.push(f);
+        });
+      }
+      lastKmlAllGeoJSON = { type: 'FeatureCollection', features: allFeatures };
+      addKmlLayers();
+    }
+
     function flyToKml(raw) {
       const parser = new DOMParser();
       const kmlDoc = parser.parseFromString(raw, "text/xml");
       const geojson = toGeoJSON.kml(kmlDoc);
       if (geojson.features && geojson.features.length) {
         const f = geojson.features[0];
-        let center;
         if (f.geometry.type === 'Point') {
-          center = f.geometry.coordinates;
+          const center = f.geometry.coordinates;
           map.flyTo({center, zoom: 13, essential: true});
         } else {
           const bbox = featureBounds(f);
-          if (bbox) {
-            map.fitBounds(bbox, {padding: 60, duration: 1200});
-          }
+          if (bbox) map.fitBounds(bbox, {padding: 60, duration: 1200});
         }
-      } 
+      }
     }
 
-    function drawSelectionCircle(center, radiusKm){
-      if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
-      if (map.getSource('selection-circle')) map.removeSource('selection-circle');
-
-      const circleGeojson = createCircleGeoJSON(center, radiusKm);
-        map.addSource('selection-circle',{type: 'geojson', data: circleGeojson});
-        map.addLayer({
-          id: 'selection-circle',
-          type: 'fill',
-          source: 'selection-circle',
-          paint: {'fill-color':'#44f','fill-opacity':0.2}
-        })
-     }
-
-     function createCircleGeoJSON(center, radiusKm,points = 64){
-      const[lng, lat] = center;
-      const coords =[];
-      for (let i =0;i<=points;i++){
-        const angle = (i/ points) * 2 * Math.PI;
-        const dx = radiusKm * Math.cos(angle);
-        const dy = radiusKm * Math.sin(angle);
-        const dLng = dx / (111.32 * Math.cos(lat * Math.PI / 180));
-        const dLat = dy/ 110.574;
-        coords.push([lng + dLng, lat + dLat]);
-      }
-      return {
-        type:"FeatureCollection",
-        features:[{
-          type: "Feature",
-          geometry:{type:'Polygon', coordinates:[coords]},
-          properties:{}
-      }]
-      };
-     }
-    
-
-    // Globe: click-to-fly (and popup)
+    // ---------------------------
+    // Click handlers
+    // ---------------------------
     map.on('click', 'kml-point', function(e) {
       if (e.features.length) {
         const coords = e.features[0].geometry.coordinates;
-        const name = e.features[0].properties.kmlName;
         map.flyTo({center: coords, zoom: 13, essential: true});
       }
     });
     map.on('click', 'kml-polygon', function(e) {
       if (e.features.length) {
         const bbox = featureBounds(e.features[0]);
-        const name = e.features[0].properties.kmlName;
         if (bbox) map.fitBounds(bbox, {padding: 60, duration: 1200});
       }
     });
@@ -270,89 +285,92 @@
         }));
       }
     });
-    
-    // Receive messages from React Native app
-  window.addEventListener('message', function (event) {
-    try {
-      let msg = JSON.parse(event.data);
 
-      if (msg.type === 'KML_LIST') showKmlList(msg.payload);
-      else if (msg.type === 'KML_FLYTO') flyToKml(msg.payload);
-      else if (msg.type === 'STATIONS') {
-        renderStations(msg.payload);
-      }
-      else if (msg.type === 'RADIUS_UPDATE') {
-        window.radiusKm = msg.payload.radiusKm;
-      }
-      else if (msg.type === 'STATIONS_IN_RADIUS') {
-        // ... your existing highlight logic ...
-        const { stations, center, radiusKm } = msg.payload;
-        drawSelectionCircle(center, radiusKm);
-        const geojson = {
-          type: "FeatureCollection",
-          features: stations.map(station => ({
-            type: "Feature",
-            geometry: {
-              type: "Point",
-              coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
-            },
-            properties: { name: station.stationName }
-          }))
-        };
-        if (map.getSource('selected-stations')) {
-          map.removeLayer('selected-stations'); map.removeSource('selected-stations');
+    // ---------------------------
+    // RN <-> WebView messaging
+    // ---------------------------
+    window.addEventListener('message', function (event) {
+      try {
+        let msg = JSON.parse(event.data);
+
+        if (msg.type === 'KML_LIST') {
+          showKmlList(msg.payload);
         }
-        map.addSource('selected-stations', { type: 'geojson', data: geojson });
-        map.addLayer({
-          id: 'selected-stations',
-          type: 'circle',
-          source: 'selected-stations',
-          paint: { 'circle-radius': 6, 'circle-color': '#44f' }
-        });
-        if (stations.length > 0) {
-          map.flyTo({ center: geojson.features[0].geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
+        else if (msg.type === 'KML_FLYTO') {
+          flyToKml(msg.payload);
         }
+        else if (msg.type === 'STATIONS') {
+          window.stationsList = msg.payload || [];
+          addStationsLayer();
+        }
+        else if (msg.type === 'RADIUS_UPDATE') {
+          window.radiusKm = msg.payload.radiusKm;
+        }
+        else if (msg.type === 'STATIONS_IN_RADIUS') {
+          const { stations, center, radiusKm } = msg.payload;
+          lastSelectionCenter = center;
+          lastSelectionRadiusKm = radiusKm;
+          lastSelectedGeoJSON = {
+            type: "FeatureCollection",
+            features: (stations || []).map(station => ({
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: [parseFloat(station.longitude), parseFloat(station.latitude)]
+              },
+              properties: { name: station.stationName }
+            }))
+          };
+          addSelectionLayers();
+          if (stations && stations.length > 0) {
+            map.flyTo({ center: lastSelectedGeoJSON.features[0].geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
+          }
+        }
+        else if (msg.type === 'KML_GET_CENTER') {
+          const { kmlId } = msg.payload || {};
+          if (!kmlId) return;
+          const feat = (kmlFeatures || []).find(f => f.id === kmlId);
+          if (!feat) return;
+
+          let center = null;
+          if (feat.type === 'Point') {
+            center = feat.geojson.geometry.coordinates; // [lng, lat]
+          } else {
+            const bbox = featureBounds(feat.geojson);
+            if (bbox) center = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
+          }
+          if (center && window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'KML_CENTER',
+              payload: { kmlId, center }
+            }));
+          }
+        }
+        else if (msg.type === 'SET_STYLE') {
+          // NEW: switch base map style; on 'style.load' we'll re-add layers
+          const { styleURL } = msg.payload || {};
+          if (!styleURL) return;
+          map.setStyle(styleURL);
+        }
+      } catch (e) {
+        console.log("[postMessage] Error: " + e);
       }
-      else if (msg.type === 'KML_GET_CENTER') {
-        const { kmlId } = msg.payload || {};
-        if (!kmlId) return;
-        const feat = (kmlFeatures || []).find(f => f.id === kmlId);
-        if (!feat) return;
+    });
 
-        let center = null;
-        if (feat.type === 'Point') {
-          center = feat.geojson.geometry.coordinates; // [lng, lat]
-        } else {
-          const bbox = featureBounds(feat.geojson);
-          if (bbox) center = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
-        }
-        if (center && window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'KML_CENTER',
-            payload: { kmlId, center }
-          }));
-        }
-      }
-    } catch (e) {
-      console.log("[postMessage] Error: " + e);
-    }
-  });
-
-
-
-    // Debug: Show a marker if nothing loads in first 2s
+    // Fallback marker if nothing loads quickly
     setTimeout(() => {
       if (!map.getSource('kml-data')) {
-        addGeoJsonToMap({
+        lastKmlAllGeoJSON = {
           type: "FeatureCollection",
           features: [
             {
               type: "Feature",
               geometry: { type: "Point", coordinates: [106.9, 47.9] },
-              properties: { kmlId: "test", kmlName: "Timeout Marker" }
+              properties: { kmlId: "fallback", kmlName: "Timeout Marker" }
             }
           ]
-        });
+        };
+        addKmlLayers();
       }
     }, 2000);
   </script>
