@@ -324,12 +324,7 @@
           center = feat.geojson.geometry.coordinates; // [lng, lat]
         } else {
           const bbox = featureBounds(feat.geojson);
-          if (bbox) {
-            center = [
-              (bbox[0][0] + bbox[1][0]) / 2,
-              (bbox[0][1] + bbox[1][1]) / 2
-            ];
-          }
+          if (bbox) center = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
         }
         if (center && window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
