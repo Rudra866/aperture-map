@@ -54,7 +54,7 @@
       projection: 'globe',
       attributionControl: false,  // disables attribution control
       zoom: 2,
-      center: [106.9, 47.9]
+      center: [-98.57, 38.82]
     });
 
     map.on('style.load', () => {
@@ -361,23 +361,6 @@
         console.log("[postMessage] Error: " + e);
       }
     });
-
-    // Fallback marker if nothing loads quickly
-    setTimeout(() => {
-      if (!map.getSource('kml-data')) {
-        lastKmlAllGeoJSON = {
-          type: "FeatureCollection",
-          features: [
-            {
-              type: "Feature",
-              geometry: { type: "Point", coordinates: [106.9, 47.9] },
-              properties: { kmlId: "fallback", kmlName: "Timeout Marker" }
-            }
-          ]
-        };
-        addKmlLayers();
-      }
-    }, 2000);
   </script>
 </body>
 </html>
