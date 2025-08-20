@@ -10,6 +10,8 @@
   <style>
     html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
     #debugLog { position:absolute;top:0;left:0;z-index:9999;color:#fff;background:rgba(0,0,0,0.7);max-width:100vw;max-height:200px;overflow:auto;font-size:12px }
+    /* Hide attribution (i icon and link) */
+    .mapboxgl-ctrl-attrib { display: none !important; }
   </style>
 </head>
 <body>
@@ -48,7 +50,7 @@
       container: 'map',
       style: 'mapbox://styles/mapbox/streets-v12',
       projection: 'globe',
-      attributionControl: false,
+      attributionControl: false,  // disables attribution control
       zoom: 2,
       center: [106.9, 47.9]
     });
