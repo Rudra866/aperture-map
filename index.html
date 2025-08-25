@@ -10,9 +10,7 @@
   <style>
     html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
     #debugLog { position:absolute;top:0;left:0;z-index:9999;color:#fff;background:rgba(0,0,0,0.7);max-width:100vw;max-height:200px;overflow:auto;font-size:12px }
-    /* Hide attribution (i icon and link) */
     .mapboxgl-ctrl-attrib { display: none !important; }
-    /* Hide Mapbox logo */
     .mapboxgl-ctrl-logo { display: none !important; }
   </style>  
 </head>
@@ -21,18 +19,16 @@
   <pre id="debugLog"></pre>
   <script>
     // ---------------------------
-    // Global caches (so we can re-add after style changes)
+    // Global caches
     // ---------------------------
     window.stationsList = [];
     window.radiusKm = 100;
+    window.stationColorMap = {}; // stationId -> { color, value }
 
-    // Keep last-drawn data for re-adding
-    let lastKmlAllGeoJSON = null;       // FeatureCollection of all KML features
-    let lastSelectedGeoJSON = null;     // FeatureCollection of highlighted/selected stations
-    let lastSelectionCenter = null;     // [lng, lat]
+    let lastKmlAllGeoJSON = null;
+    let lastSelectedGeoJSON = null;
+    let lastSelectionCenter = null;
     let lastSelectionRadiusKm = null;
-
-    // In-memory KML features with ids for lookups
     let kmlFeatures = [];
 
     function debug(msg) {
@@ -52,14 +48,13 @@
       container: 'map',
       style: 'mapbox://styles/mapbox/streets-v12',
       projection: 'globe',
-      attributionControl: false,  // disables attribution control
-      zoom: 2,
-      center: [-98.57, 38.82]
+      attributionControl: false,
+      zoom: 3.2,
+      center: [-98.5, 39.8] // North America default
     });
 
     map.on('style.load', () => {
       map.setFog({});
-      // Re-add everything after ANY style change
       readdAllLayers();
     });
 
@@ -145,22 +140,42 @@
     }
 
     function addStationsLayer() {
+      const stylesMap = window.stationColorMap || {};
       const stationFeatures = (window.stationsList || [])
         .filter(st => st.latitude != null && st.longitude != null &&
                       !isNaN(Number(st.latitude)) && !isNaN(Number(st.longitude)))
-        .map(st => ({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [parseFloat(st.longitude), parseFloat(st.latitude)] },
-          properties: { name: st.stationName }
-        }));
+        .map(st => {
+          const sid = String(st.stationId ?? st.station_id ?? '');
+          const style = stylesMap[sid] || null;
+          return {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [parseFloat(st.longitude), parseFloat(st.latitude)] },
+            properties: {
+              name: st.stationName || st.name || sid,
+              sid,
+              col: style ? style.color : null,
+              intensity: style ? style.value : null
+            }
+          };
+        });
       const gj = { type: 'FeatureCollection', features: stationFeatures };
       addOrUpdateSource('stations', gj);
+
       if (!map.getLayer('station-points')) {
         map.addLayer({
           id: 'station-points',
           type: 'circle',
           source: 'stations',
-          paint: { 'circle-radius': 3, 'circle-color': '#ff5500' }
+          paint: {
+            'circle-radius': 4,
+            'circle-color': ['coalesce', ['get', 'col'], '#ff5500'],
+            'circle-stroke-color': '#000',
+            'circle-stroke-width': [
+              'case',
+              ['has', 'intensity'], 0.5,
+              0.2
+            ]
+          }
         });
       }
     }
@@ -188,7 +203,6 @@
 
     function addSelectionLayers() {
       if (!lastSelectionCenter || lastSelectionRadiusKm == null) {
-        // still remove old sources if any
         if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
         if (map.getSource('selection-circle')) map.removeSource('selection-circle');
         if (map.getLayer('selected-stations')) map.removeLayer('selected-stations');
@@ -196,7 +210,6 @@
         return;
       }
 
-      // circle
       const circleGeojson = createCircleGeoJSON(lastSelectionCenter, lastSelectionRadiusKm);
       addOrUpdateSource('selection-circle', circleGeojson);
       if (!map.getLayer('selection-circle')) {
@@ -208,7 +221,6 @@
         });
       }
 
-      // selected stations
       const gj = lastSelectedGeoJSON || { type: 'FeatureCollection', features: [] };
       addOrUpdateSource('selected-stations', gj);
       if (!map.getLayer('selected-stations')) {
@@ -225,6 +237,38 @@
       addKmlLayers();
       addStationsLayer();
       addSelectionLayers();
+    }
+
+    // Legend
+    function renderLegend(bins = [], unit = '') {
+      let el = document.getElementById('legend');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'legend';
+        Object.assign(el.style, {
+          position: 'absolute',
+          left: '10px',
+          top: '10px',
+          background: 'rgba(255,255,255,0.95)',
+          borderRadius: '10px',
+          padding: '10px',
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '12px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          zIndex: 9999,
+          maxHeight: '90vh',
+          overflowY: 'auto'
+        });
+        document.body.appendChild(el);
+      }
+      el.innerHTML = `<div style="font-weight:700;margin-bottom:6px">Precipitation (${unit})</div>`;
+      const rows = [...bins].reverse().map(b => `
+        <div style="display:flex;align-items:center;margin:2px 0">
+          <div style="width:14px;height:14px;background:${b.color};border:1px solid #222;margin-right:6px"></div>
+          <div>${Number.isFinite(b.upTo) ? b.upTo.toFixed(b.upTo >= 1 ? 2 : 2) : '∞'}</div>
+        </div>
+      `);
+      el.innerHTML += rows.join('');
     }
 
     // ---------------------------
@@ -276,9 +320,7 @@
       }
     });
     map.on('click', function(e) {
-      // Don't fire when clicking a feature; only background.
       if (e.features && e.features.length > 0) return;
-      // Send click coordinates and the list of all stations to React Native
       if (window.ReactNativeWebView && window.stationsList && window.stationsList.length) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'MAP_CLICK',
@@ -352,15 +394,23 @@
           }
         }
         else if (msg.type === 'SET_STYLE') {
-          // NEW: switch base map style; on 'style.load' we'll re-add layers
           const { styleURL } = msg.payload || {};
           if (!styleURL) return;
           map.setStyle(styleURL);
+        }
+        else if (msg.type === 'STATION_INTENSITY') {
+          window.stationColorMap = msg.payload?.styles || {};
+          addStationsLayer();
+          if (msg.payload?.legendBins) {
+            renderLegend(msg.payload.legendBins, msg.payload?.legend?.unit || '');
+          }
         }
       } catch (e) {
         console.log("[postMessage] Error: " + e);
       }
     });
+
+    // NOTE: removed old fallback marker block
   </script>
 </body>
 </html>
