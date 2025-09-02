@@ -24,6 +24,14 @@
     window.stationsList = [];
     window.radiusKm = 100;
     window.stationColorMap = {}; // stationId -> { color, value }
+    window.__stationsVisible = false; // default OFF
+    function setStationsVisibility(vis) {
+      window.__stationsVisible = !!vis;
+      const lyr = map.getLayer('station-points');
+      if (lyr) {
+        map.setLayoutProperty('station-points', 'visibility', window.__stationsVisible ? 'visible' : 'none');
+      }
+    }
 
     let lastKmlAllGeoJSON = null;
     let lastSelectedGeoJSON = null;
@@ -160,7 +168,6 @@
         });
       const gj = { type: 'FeatureCollection', features: stationFeatures };
       addOrUpdateSource('stations', gj);
-
       if (!map.getLayer('station-points')) {
         map.addLayer({
           id: 'station-points',
@@ -170,14 +177,16 @@
             'circle-radius': 4,
             'circle-color': ['coalesce', ['get', 'col'], '#ff5500'],
             'circle-stroke-color': '#000',
-            'circle-stroke-width': [
-              'case',
-              ['has', 'intensity'], 0.5,
-              0.2
-            ]
+            'circle-stroke-width': ['case', ['has', 'intensity'], 0.5, 0.2]
+          },
+          layout: {
+            visibility: window.__stationsVisible ? 'visible' : 'none'
           }
         });
+      } else {
+        map.setLayoutProperty('station-points', 'visibility', window.__stationsVisible ? 'visible' : 'none');
       }
+
     }
 
     function createCircleGeoJSON(center, radiusKm, points = 64) {
@@ -476,6 +485,9 @@
           if (msg.payload?.legendBins) {
             renderLegend(msg.payload.legendBins, msg.payload?.legend?.unit || '');
           }
+        }
+        else if (msg.type === 'SET_STATIONS_VISIBLE') {
+          setStationsVisibility(!!msg.payload?.visible);
         }
       } catch (e) {
         console.log("[postMessage] Error: " + e);
