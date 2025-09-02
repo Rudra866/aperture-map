@@ -201,6 +201,70 @@
       };
     }
 
+        // --- long-press state ---
+    let __lpTimer = null;
+    let __lpStart = null;
+    let __activePopup = null;
+    // When we long-press a station, set this so the subsequent 'click' is ignored on RN
+    window.__suppressMapClickUntil = 0;
+
+    function clearLongPress() {
+      if (__lpTimer) { clearTimeout(__lpTimer); __lpTimer = null; }
+      __lpStart = null;
+    }
+
+    function showStationPopup(feature) {
+      try {
+        const coords = feature.geometry.coordinates;
+        const name = feature.properties?.name || feature.properties?.sid || 'Station';
+        if (__activePopup) __activePopup.remove();
+        __activePopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: true })
+          .setLngLat(coords)
+          .setHTML(`<div style="font: 600 13px system-ui, sans-serif">${name}</div>`)
+          .addTo(map);
+      } catch {}
+    }
+
+    // Start a long-press if finger/mouse is held ~1s without moving much
+    function startLongPress(e) {
+      if (!e.features || !e.features.length) return;
+      const feature = e.features[0];
+      __lpStart = e.point;
+      clearLongPress();
+      __lpTimer = setTimeout(() => {
+        showStationPopup(feature);
+        // Ignore any click that Mapbox emits right after the long press
+        window.__suppressMapClickUntil = Date.now() + 600;
+      }, 1000); // 1s press
+    }
+
+    function cancelLongPress(e) {
+      clearLongPress();
+    }
+
+    // If the pointer moves too far, cancel the pending long-press
+    function maybeCancelOnMove(e) {
+      if (!__lpStart) return;
+      const dx = Math.abs(e.point.x - __lpStart.x);
+      const dy = Math.abs(e.point.y - __lpStart.y);
+      if (dx > 6 || dy > 6) clearLongPress();
+    }
+
+    // Bind to the STATION layer (delegated — safe across style reloads)
+    map.on('mousedown',   'station-points', startLongPress);
+    map.on('touchstart',  'station-points', startLongPress);
+    map.on('mouseup',     'station-points', cancelLongPress);
+    map.on('touchend',    'station-points', cancelLongPress);
+    map.on('dragstart',                    cancelLongPress);
+    map.on('move',                         maybeCancelOnMove);
+
+    // Also: if user just taps a station (no long-press), do nothing (no chart)
+    // but you could show a tiny highlight here if you want.
+    map.on('click', 'station-points', (e) => {
+      // intentionally empty — handled by long-press only
+    });
+
+
     function addSelectionLayers() {
       if (!lastSelectionCenter || lastSelectionRadiusKm == null) {
         if (map.getLayer('selection-circle')) map.removeLayer('selection-circle');
@@ -320,7 +384,14 @@
       }
     });
     map.on('click', function(e) {
-      if (e.features && e.features.length > 0) return;
+      // 1) if this click comes right after a long-press, ignore
+      if (window.__suppressMapClickUntil && Date.now() < window.__suppressMapClickUntil) return;
+
+      // 2) if the click landed on a station, ignore (long-press is the only action on stations)
+      const hits = map.queryRenderedFeatures(e.point, { layers: ['station-points'] });
+      if (hits && hits.length) return;
+
+      // 3) otherwise: this is a globe tap → send to RN so it can open the chart
       if (window.ReactNativeWebView && window.stationsList && window.stationsList.length) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'MAP_CLICK',
@@ -332,6 +403,7 @@
         }));
       }
     });
+
 
     // ---------------------------
     // RN <-> WebView messaging
