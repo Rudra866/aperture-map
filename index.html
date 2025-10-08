@@ -489,6 +489,27 @@
         else if (msg.type === 'SET_STATIONS_VISIBLE') {
           setStationsVisibility(!!msg.payload?.visible);
         }
+        else if (msg.type === 'REQUEST_STATIONS_SNAPSHOT') {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'STATIONS_SNAPSHOT',
+              payload: (window.stationsList || [])
+            }));
+          }
+        }
+        else if (msg.type === 'INTENSITY_RESET') {
+          window.stationColorMap = {};
+          // restore all stations if you were filtering in INTENSITY_REQUEST
+          if (window.__intensityMode && window.__originalStationsList && window.__originalStationsList.length) {
+            window.stationsList = window.__originalStationsList.slice();
+            window.__originalStationsList = [];
+          }
+          // remove legend if present
+          const lg = document.getElementById('legend'); if (lg) lg.remove();
+          // redraw
+          addStationsLayer();
+          window.__intensityMode = false;
+        }
       } catch (e) {
         console.log("[postMessage] Error: " + e);
       }
