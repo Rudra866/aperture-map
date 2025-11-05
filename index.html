@@ -558,12 +558,10 @@
         else if (msg.type === "USER_LOCATION") {
           const { lat, lon, accuracy } = msg.payload || {};
           if (Number.isFinite(lat) && Number.isFinite(lon)) {
-            upsertUserLocation(lon, lat, accuracy);
-
-            // Auto-center ONCE when we get the first good fix (no button needed)
-            if (!__autoCentered) {
-              __autoCentered = true;
-              map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 10), essential: true });
+            const acc = Number.isFinite(accuracy) ? accuracy : 30;
+            // optional: ignore if identical to last
+            if (!lastUserLoc || lastUserLoc.lon !== lon || lastUserLoc.lat !== lat || lastUserLoc.accuracy !== acc) {
+              upsertUserLocation(lon, lat, acc);
             }
           }
         }
