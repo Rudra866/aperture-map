@@ -38,6 +38,69 @@
     let lastSelectionCenter = null;
     let lastSelectionRadiusKm = null;
     let kmlFeatures = [];
+    let lastUserLocation = null;
+    let autoCentered = false;
+
+    function createCircleGeoJSONMeters(center, radiusMeters, points = 64) {
+    const [lng, lat] = center;
+    const radiusKm = Math.max((radiusMeters || 0) / 1000, 0.005); // min ring
+    const coords = [];
+    for (let i = 0; i <= points; i++) {
+      const a = (i / points) * 2 * Math.PI;
+      const dx = radiusKm * Math.cos(a);
+      const dy = radiusKm * Math.sin(a);
+      const dLng = dx / (111.32 * Math.cos(lat * Math.PI / 180));
+      const dLat = dy / 110.574;
+      coords.push([lng + dLng, lat + dLat]);
+    }
+    return {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", geometry: { type: "Polygon", coordinates: [coords] }, properties: {} }]
+      };
+    }
+
+    function upsertUserLocation(lng, lat, accuracy) {
+    lastUserLoc = { lng, lat, accuracy };
+
+      const point = {
+        type: "FeatureCollection",
+        features: [{ type: "Feature", geometry: { type: "Point", coordinates: [lng, lat] }, properties: {} }]
+      };
+      const ring = createCircleGeoJSONMeters([lng, lat], accuracy);
+
+      addOrUpdateSource("user-location", point);
+      addOrUpdateSource("user-location-accuracy", ring);
+
+      if (!map.getLayer("user-location-accuracy")) {
+        map.addLayer({
+          id: "user-location-accuracy",
+          type: "fill",
+          source: "user-location-accuracy",
+          paint: { "fill-color": "#3b82f6", "fill-opacity": 0.12 }
+        });
+      }
+      if (!map.getLayer("user-location-dot")) {
+        map.addLayer({
+          id: "user-location-dot",
+          type: "circle",
+          source: "user-location",
+          paint: {
+            "circle-radius": 6,
+            "circle-color": "#1d4ed8",
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff"
+          }
+        });
+      }
+    }
+
+    function removeUserLocation() {
+      lastUserLoc = null;
+      if (map.getLayer("user-location-dot")) map.removeLayer("user-location-dot");
+      if (map.getLayer("user-location-accuracy")) map.removeLayer("user-location-accuracy");
+      if (map.getSource("user-location")) map.removeSource("user-location");
+      if (map.getSource("user-location-accuracy")) map.removeSource("user-location-accuracy");
+    }
 
     function debug(msg) {
       const el = document.getElementById('debugLog');
@@ -310,6 +373,9 @@
       addKmlLayers();
       addStationsLayer();
       addSelectionLayers();
+      if (lastUserLoc) {
+        upsertUserLocation(lastUserLoc.lng, lastUserLoc.lat, lastUserLoc.accuracy);
+      } 
     }
 
     // Legend
@@ -489,6 +555,22 @@
         else if (msg.type === 'SET_STATIONS_VISIBLE') {
           setStationsVisibility(!!msg.payload?.visible);
         }
+        else if (msg.type === "USER_LOCATION") {
+          const { lat, lon, accuracy } = msg.payload || {};
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            upsertUserLocation(lon, lat, accuracy);
+
+            // Auto-center ONCE when we get the first good fix (no button needed)
+            if (!__autoCentered) {
+              __autoCentered = true;
+              map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 10), essential: true });
+            }
+          }
+        }
+        else if (msg.type === "USER_LOCATION_CLEAR") {
+          removeUserLocation();
+        }
+
         else if (msg.type === 'REQUEST_STATIONS_SNAPSHOT') {
           if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -515,7 +597,6 @@
       }
     });
 
-    // NOTE: removed old fallback marker block
   </script>
 </body>
 </html>
