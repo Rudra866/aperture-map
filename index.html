@@ -32,6 +32,9 @@
         map.setLayoutProperty('station-points', 'visibility', window.__stationsVisible ? 'visible' : 'none');
       }
     }
+    if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'WEB_READY' }));
+    }
 
     let lastKmlAllGeoJSON = null;
     let lastSelectedGeoJSON = null;
@@ -127,6 +130,11 @@
     map.on('style.load', () => {
       map.setFog({});
       readdAllLayers();
+    });
+    map.on('load', () => {
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_READY' }));
+      }
     });
 
     // ---------------------------
