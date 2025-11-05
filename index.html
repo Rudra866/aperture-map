@@ -95,6 +95,13 @@
           }
         });
       }
+      if (!map._userDotClickBound) {
+      map.on('click', 'user-location-dot', () => {
+        if (lastUserLoc) showUserLocationPopup([lastUserLoc.lng, lastUserLoc.lat]);
+      });
+      map._userDotClickBound = true;
+    }
+
     }
 
     function removeUserLocation() {
@@ -303,6 +310,15 @@
           .setHTML(`<div style="font: 600 13px system-ui, sans-serif">${name}</div>`)
           .addTo(map);
       } catch {}
+    }
+
+    function showUserLocationPopup(coord) {
+      try {
+        new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
+          .setLngLat(coord)
+          .setHTML('<div style="font:600 13px system-ui,sans-serif">Your location</div>')
+          .addTo(map);
+      } catch (e) {}
     }
 
     // Start a long-press if finger/mouse is held ~1s without moving much
