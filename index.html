@@ -41,7 +41,6 @@
     let lastSelectionCenter = null;
     let lastSelectionRadiusKm = null;
     let kmlFeatures = [];
-    let lastUserLocation = null;
     let autoCentered = false;
 
     function createCircleGeoJSONMeters(center, radiusMeters, points = 64) {
@@ -63,7 +62,7 @@
     }
 
     function upsertUserLocation(lng, lat, accuracy) {
-    lastUserLoc = { lng, lat, accuracy };
+  
 
       const point = {
         type: "FeatureCollection",
@@ -98,7 +97,6 @@
     }
 
     function removeUserLocation() {
-      lastUserLoc = null;
       if (map.getLayer("user-location-dot")) map.removeLayer("user-location-dot");
       if (map.getLayer("user-location-accuracy")) map.removeLayer("user-location-accuracy");
       if (map.getSource("user-location")) map.removeSource("user-location");
@@ -381,9 +379,6 @@
       addKmlLayers();
       addStationsLayer();
       addSelectionLayers();
-      if (lastUserLoc) {
-        upsertUserLocation(lastUserLoc.lng, lastUserLoc.lat, lastUserLoc.accuracy);
-      } 
     }
 
     // Legend
@@ -567,10 +562,6 @@
           const { lat, lon, accuracy } = msg.payload || {};
           if (Number.isFinite(lat) && Number.isFinite(lon)) {
             const acc = Number.isFinite(accuracy) ? accuracy : 30;
-            // optional: ignore if identical to last
-            if (!lastUserLoc || lastUserLoc.lon !== lon || lastUserLoc.lat !== lat || lastUserLoc.accuracy !== acc) {
-              upsertUserLocation(lon, lat, acc);
-            }
           }
         }
         else if (msg.type === "USER_LOCATION_CLEAR") {
