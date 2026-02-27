@@ -844,6 +844,53 @@
 
       finishGridSelection();
     });
+
+    function onGridTouchStart(e) {
+      if (!window.__gridMode || !window.__gridDrawMode) return;
+
+      __gridIsDrawing = true;
+      __gridStartPoint = e.lngLat;
+      map.dragPan.disable();
+
+      __gridRectCoords = [[
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+      ]];
+
+      updateGridRect(__gridRectCoords);
+    }
+
+    function onGridTouchMove(e) {
+      if (!window.__gridMode || !window.__gridDrawMode || !__gridIsDrawing || !__gridStartPoint) return;
+
+      const endPoint = e.lngLat;
+
+      __gridRectCoords = [[
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+        [endPoint.lng, __gridStartPoint.lat],
+        [endPoint.lng, endPoint.lat],
+        [__gridStartPoint.lng, endPoint.lat],
+        [__gridStartPoint.lng, __gridStartPoint.lat],
+      ]];
+
+      updateGridRect(__gridRectCoords);
+    }
+
+    function onGridTouchEnd() {
+      if (!window.__gridMode || !window.__gridDrawMode || !__gridIsDrawing) return;
+
+      __gridIsDrawing = false;
+      map.dragPan.enable();
+
+      finishGridSelection();
+    }
+
+    map.on("touchstart", onGridTouchStart);
+    map.on("touchmove", onGridTouchMove);
+    map.on("touchend", onGridTouchEnd);
     map.on("mouseleave", () => {
       if (!__gridIsDrawing) return;
 
