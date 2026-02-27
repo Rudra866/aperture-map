@@ -17,7 +17,6 @@
 </head>
 <body>
   <div id="map"></div>
-  <pre id="debugLog"></pre>
   <script>
     // ---------------------------
     // Global caches
@@ -547,14 +546,20 @@
       if (map.getSource("user-location-accuracy")) map.removeSource("user-location-accuracy");
     }
 
-    function debug(msg) {
-      const el = document.getElementById('debugLog');
-      if (!el) return;
-      el.textContent += (typeof msg === 'object' ? JSON.stringify(msg, null, 2) : msg) + '\n';
-      el.scrollTop = el.scrollHeight;
-    }
-    console.log = debug;
-    console.error = debug;
+    // Debug log was previously wired to console.log/console.error and rendered
+    // into the #debugLog overlay. This caused noisy internal Mapbox messages
+    // (like "style not done loading") to appear on top of the screen.
+    // Disable this wiring so normal console behavior is restored and
+    // nothing is printed into the on-screen overlay.
+    //
+    // function debug(msg) {
+    //   const el = document.getElementById('debugLog');
+    //   if (!el) return;
+    //   el.textContent += (typeof msg === 'object' ? JSON.stringify(msg, null, 2) : msg) + '\n';
+    //   el.scrollTop = el.scrollHeight;
+    // }
+    // console.log = debug;
+    // console.error = debug;
 
     // ---------------------------
     // Map init
