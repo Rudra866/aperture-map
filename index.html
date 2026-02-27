@@ -266,40 +266,184 @@
       updateGridRect(__gridRectCoords);
     }
 
+    // Compute [ [minLng, minLat], [maxLng, maxLat] ] from the drawn rectangle
+    function getBoundsFromRect(rectCoords) {
+      if (!rectCoords || !rectCoords.length || !rectCoords[0].length) return null;
+      const ring = rectCoords[0];
+      let minLng = ring[0][0];
+      let maxLng = ring[0][0];
+      let minLat = ring[0][1];
+      let maxLat = ring[0][1];
+      for (let i = 1; i < ring.length; i++) {
+        const pt = ring[i];
+        if (!pt) continue;
+        const lng = pt[0];
+        const lat = pt[1];
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+      return [[minLng, minLat], [maxLng, maxLat]];
+    }
+
+    // Build a full grid (including empty cells) just inside the dragged rectangle
+    function buildFullGridForBounds(bounds, interval, rows) {
+      if (!bounds) return { type: "FeatureCollection", features: [] };
+      const [[minLngRaw, minLatRaw], [maxLngRaw, maxLatRaw]] = bounds;
+      const intervalVal = Number(interval) || 0.5;
+      const minLng = Math.min(minLngRaw, maxLngRaw);
+      const maxLng = Math.max(minLngRaw, maxLngRaw);
+      const minLat = Math.min(minLatRaw, maxLatRaw);
+      const maxLat = Math.max(minLatRaw, maxLatRaw);
+
+      const startLon = Math.floor(minLng / intervalVal) * intervalVal;
+      const endLon = Math.ceil(maxLng / intervalVal) * intervalVal;
+      const startLat = Math.floor(minLat / intervalVal) * intervalVal;
+      const endLat = Math.ceil(maxLat / intervalVal) * intervalVal;
+
+      const cellAccum = new Map();
+
+      (rows || []).forEach((r) => {
+        const lat = Number(r.latitude);
+        const lon = Number(r.longitude);
+        const precip = Number(r.totalPrecipitation || 0);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        if (lon < startLon || lon > endLon || lat < startLat || lat > endLat) return;
+
+        const cellLon = Math.floor(lon / intervalVal) * intervalVal;
+        const cellLat = Math.floor(lat / intervalVal) * intervalVal;
+        const key = `${cellLon}_${cellLat}`;
+
+        if (!cellAccum.has(key)) {
+          cellAccum.set(key, { lon: cellLon, lat: cellLat, sum: 0, count: 0 });
+        }
+        const cell = cellAccum.get(key);
+        if (Number.isFinite(precip)) {
+          cell.sum += precip;
+          cell.count += 1;
+        }
+      });
+
+      const features = [];
+
+      for (let lng = startLon; lng < endLon; lng += intervalVal) {
+        for (let lat = startLat; lat < endLat; lat += intervalVal) {
+          const key = `${lng}_${lat}`;
+          const accum = cellAccum.get(key) || { sum: 0, count: 0 };
+          const hasData = accum.count > 0;
+          const value = hasData ? accum.sum / accum.count : null;
+
+          features.push({
+            type: "Feature",
+            geometry: {
+              type: "Polygon",
+              coordinates: [[
+                [lng, lat],
+                [lng + intervalVal, lat],
+                [lng + intervalVal, lat + intervalVal],
+                [lng, lat + intervalVal],
+                [lng, lat],
+              ]],
+            },
+            properties: {
+              id: `${lng}_${lat}`,
+              longitude: lng,
+              latitude: lat,
+              avgPrecipitation: value,
+              isReal: hasData,
+            },
+          });
+        }
+      }
+
+      return { type: "FeatureCollection", features };
+    }
+
+    // Fill empty cells inside a small local grid by propagating from nearby real cells
+    function fillEmptyCellsByPropagation(gridFC) {
+      const features = (gridFC && gridFC.features) || [];
+      if (!features.length) return gridFC;
+
+      const realCells = [];
+      const emptyCells = [];
+
+      for (let i = 0; i < features.length; i++) {
+        const f = features[i];
+        const v = f.properties && f.properties.avgPrecipitation;
+        const isReal = f.properties && f.properties.isReal;
+        const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+        if (!coords || !coords.length) continue;
+        const center = [
+          (coords[0][0] + coords[2][0]) / 2,
+          (coords[0][1] + coords[2][1]) / 2,
+        ];
+        if (isReal && Number.isFinite(v)) {
+          realCells.push({ index: i, value: Number(v), center });
+        } else {
+          emptyCells.push({ index: i, center });
+        }
+      }
+
+      if (!realCells.length) {
+        return gridFC;
+      }
+
+      const K = 5;
+      emptyCells.forEach((cell) => {
+        const distances = realCells.map((rc) => {
+          const d = turf.distance(
+            turf.point(cell.center),
+            turf.point(rc.center),
+            { units: "kilometers" },
+          );
+          return { rc, d };
+        });
+        distances.sort((a, b) => a.d - b.d);
+        const neighbors = distances.slice(0, K).filter((x) => x.d > 0);
+        if (!neighbors.length) return;
+
+        let num = 0;
+        let den = 0;
+        neighbors.forEach(({ rc, d }) => {
+          const w = 1 / Math.pow(d + 0.0001, 2);
+          num += rc.value * w;
+          den += w;
+        });
+        if (den > 0) {
+          const inferred = num / den;
+          const f = features[cell.index];
+          f.properties.avgPrecipitation = inferred;
+          f.properties.isReal = false;
+        }
+      });
+
+      return gridFC;
+    }
+
     function finishGridSelection() {
       if (!__gridRectCoords.length) return;
 
-      const drawnPoly = turf.polygon(__gridRectCoords);
-      const base = window.__gridBaseGeoJSON || { type: "FeatureCollection", features: [] };
+      const bounds = getBoundsFromRect(__gridRectCoords);
+      const interval = window.__gridInterval || 0.5;
+      const rows = window.__gridRows || [];
 
-      const selected = [];
-      const allStationIds = new Set();
-      let sum = 0;
-      let count = 0;
+      const localGrid = buildFullGridForBounds(bounds, interval, rows);
+      const filledGrid = fillEmptyCellsByPropagation(localGrid);
 
-      base.features.forEach((feature) => {
-        try {
-          if (turf.booleanIntersects(feature, drawnPoly)) {
-            const cloned = JSON.parse(JSON.stringify(feature));
-            cloned.properties.isHighlighted = true;
-            cloned.properties.color = colorForGridPrecip(cloned.properties.avgPrecipitation);
-            selected.push(cloned);
-
-            (cloned.properties.stationIds || []).forEach((sid) => allStationIds.add(String(sid)));
-
-            const v = Number(cloned.properties.avgPrecipitation);
-            if (Number.isFinite(v)) {
-              sum += v;
-              count += 1;
-            }
-          }
-        } catch {}
+      filledGrid.features.forEach((f) => {
+        const v = f.properties && f.properties.avgPrecipitation;
+        if (Number.isFinite(v)) {
+          f.properties.color = colorForGridPrecip(v);
+          f.properties.isHighlighted = true;
+        } else {
+          f.properties.color = "rgba(0,0,0,0)";
+          f.properties.isHighlighted = false;
+        }
       });
 
-      window.__gridHighlightGeoJSON = {
-        type: "FeatureCollection",
-        features: selected,
-      };
+      window.__gridHighlightGeoJSON = filledGrid;
 
       if (map.getSource("intensity-grid-highlight")) {
         map.getSource("intensity-grid-highlight").setData(window.__gridHighlightGeoJSON);
@@ -312,22 +456,6 @@
         });
       }
 
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: "GRID_SELECTION_RESULT",
-          payload: {
-            stationIds: [...allStationIds],
-            cellCount: selected.length,
-            avgPrecipitation: count ? sum / count : null,
-            cells: selected.map((f) => ({
-              id: f.properties.id,
-              latitude: f.properties.latitude,
-              longitude: f.properties.longitude,
-              avgPrecipitation: f.properties.avgPrecipitation,
-            })),
-          },
-        }));
-      }
       __gridRectCoords = [];
       __gridStartPoint = null;
     }
